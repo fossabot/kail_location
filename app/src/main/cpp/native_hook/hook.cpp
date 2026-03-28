@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cstdint>
+#include <sys/types.h>
 
 #include "sensor_simulator.h"
 
@@ -17,12 +18,12 @@
 #define SENSOR_TYPE_STEP_COUNTER 19
 #define SENSOR_TYPE_STEP_DETECTOR 18
 
-typedef ssize_t (*PollFunc)(void*, sensors_event_t*, size_t);
+typedef int (*PollFunc)(void*, sensors_event_t*, int);
 
 static PollFunc original_poll = nullptr;
 static bool hook_installed = false;
 
-extern "C" ssize_t hooked_poll(void* device, sensors_event_t* buffer, size_t count);
+extern "C" int hooked_poll(void* device, sensors_event_t* buffer, int count);
 
 static void* get_lib_base() {
     FILE* fp = fopen("/proc/self/maps", "r");
@@ -87,6 +88,8 @@ static void process_sensor_events(sensors_event_t* events, int count) {
 }
 
 extern "C" int hooked_poll(void* device, sensors_event_t* buffer, int count) {
+    ALOGI(">>> hooked_poll called, count=%d", count);
+    
     int result = 0;
     
     if (original_poll) {
