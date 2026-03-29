@@ -6,6 +6,7 @@
 
 #include <string>
 #include <link.h>
+#include <stdint.h>
 
 class ElfImg {
 public:
@@ -22,8 +23,7 @@ private:
     
     std::string elf;
     void* base = nullptr;
-    off_t size = 0;
-    off_t bias = 0;
+    off_t file_size = 0;
     
     void* dynsym = nullptr;
     void* strtab = nullptr;
@@ -35,7 +35,7 @@ private:
     uint32_t* bucket = nullptr;
     uint32_t* chain = nullptr;
     
-    void parseDynamic();
+    void parseDynamic(void* file_mapped);
     uint32_t elfHash(const char* name) const;
     uint32_t gnuHash(const char* name) const;
 };

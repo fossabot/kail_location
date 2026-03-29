@@ -1,5 +1,6 @@
 /*
  * Simplified ELF utility implementation for Android
+ * Fixed: Use mmap'd file for parsing, correct dynamic address, no bias needed
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -29,22 +30,26 @@ ElfImg::ElfImg(const char* elf_name) : elf(elf_name) {
         return;
     }
     
-    size = lseek(fd, 0, SEEK_END);
-    if (size <= 0) {
+    file_size = lseek(fd, 0, SEEK_END);
+    if (file_size <= 0) {
         ALOGE("lseek() failed for %s", elf.c_str());
         close(fd);
         return;
     }
     
-    void* mapped = mmap(nullptr, size, PROT_READ, MAP_SHARED, fd, 0);
+    // Bug 3 fix: mmap the file and use it for parsing
+    void* file_mapped = mmap(nullptr, file_size, PROT_READ, MAP_SHARED, fd, 0);
     close(fd);
     
-    if (mapped == MAP_FAILED) {
+    if (file_mapped == MAP_FAILED) {
         ALOGE("mmap failed");
         return;
     }
     
-    parseDynamic();
+    // Parse the ELF file (not process memory)
+    parseDynamic(file_mapped);
+    
+    munmap(file_mapped, file_size);
 }
 
 void ElfImg::initModuleBase() {
@@ -64,42 +69,66 @@ void ElfImg::initModuleBase() {
     fclose(fp);
 }
 
-void ElfImg::parseDynamic() {
-    Elf64_Ehdr* ehdr = (Elf64_Ehdr*)base;
-    Elf64_Phdr* phdr = (Elf64_Phdr*)((char*)base + ehdr->e_phoff);
+void ElfImg::parseDynamic(void* file_mapped) {
+    // Bug 3 fix: Parse the mmap'd file, not process memory
+    Elf64_Ehdr* ehdr = (Elf64_Ehdr*)file_mapped;
+    Elf64_Phdr* phdr = (Elf64_Phdr*)((char*)file_mapped + ehdr->e_phoff);
     
     ALOGI("parseDynamic: e_phnum=%d", ehdr->e_phnum);
     
+    uint64_t dynamic_vaddr = 0;
+    
+    // Bug 1 fix: Find PT_DYNAMIC and use its p_vaddr
     for (int i = 0; i < ehdr->e_phnum; i++) {
         if (phdr[i].p_type == PT_DYNAMIC) {
-            bias = (off_t)phdr[i].p_vaddr - (off_t)phdr[i].p_offset;
-            ALOGI("Found PT_DYNAMIC at p_vaddr=0x%lx, bias=0x%lx", phdr[i].p_vaddr, bias);
+            dynamic_vaddr = phdr[i].p_vaddr;
+            ALOGI("Found PT_DYNAMIC at p_vaddr=0x%lx, p_offset=0x%lx", 
+                  phdr[i].p_vaddr, phdr[i].p_offset);
             break;
         }
     }
     
-    if (!bias) {
-        ALOGE("No bias found!");
+    if (!dynamic_vaddr) {
+        ALOGE("No PT_DYNAMIC found!");
         return;
     }
     
-    // Find dynamic section using program header
-    Elf64_Dyn* dynamic = (Elf64_Dyn*)((char*)base + 0x1000); // approximate
+    // Calculate load bias (p_vaddr - p_offset for first PT_LOAD)
+    uint64_t load_bias = 0;
+    for (int i = 0; i < ehdr->e_phnum; i++) {
+        if (phdr[i].p_type == PT_LOAD) {
+            load_bias = phdr[i].p_vaddr - phdr[i].p_offset;
+            ALOGI("First PT_LOAD: p_vaddr=0x%lx, p_offset=0x%lx, load_bias=0x%lx",
+                  phdr[i].p_vaddr, phdr[i].p_offset, load_bias);
+            break;
+        }
+    }
     
-    ALOGI("Scanning dynamic section...");
+    // Correct dynamic address: file address + base - load_bias
+    // Bug 1 fix: Use p_vaddr from PT_DYNAMIC, not hardcoded 0x1000
+    uint64_t dynamic_file_offset = dynamic_vaddr - load_bias;
+    Elf64_Dyn* dynamic = (Elf64_Dyn*)((char*)file_mapped + dynamic_file_offset);
     
-    for (int i = 0; i < 100; i++) {
-        if (dynamic[i].d_tag == DT_NULL) break;
+    ALOGI("Dynamic: file_offset=0x%lx, computed addr=%p", 
+          dynamic_file_offset, dynamic);
+    
+    // Scan dynamic section (in file)
+    int dyn_count = 0;
+    for (int i = 0; i < 200 && dynamic[i].d_tag != DT_NULL; i++) {
+        dyn_count++;
         
         if (dynamic[i].d_tag == DT_STRTAB) {
-            strtab = (void*)(dynamic[i].d_un.d_val + bias);
-            ALOGI("Found DT_STRTAB: %p", strtab);
+            uint64_t val = dynamic[i].d_un.d_val;
+            strtab = (void*)((char*)file_mapped + (val - load_bias));
+            ALOGI("Found DT_STRTAB: d_val=0x%lx, addr=%p", val, strtab);
         } else if (dynamic[i].d_tag == DT_SYMTAB) {
-            dynsym = (void*)(dynamic[i].d_un.d_val + bias);
-            ALOGI("Found DT_SYMTAB: %p", dynsym);
+            uint64_t val = dynamic[i].d_un.d_val;
+            dynsym = (void*)((char*)file_mapped + (val - load_bias));
+            ALOGI("Found DT_SYMTAB: d_val=0x%lx, addr=%p", val, dynsym);
         } else if (dynamic[i].d_tag == DT_GNU_HASH) {
-            gnu_hash = (uint32_t*)(dynamic[i].d_un.d_val + bias);
-            ALOGI("Found DT_GNU_HASH: %p", gnu_hash);
+            uint64_t val = dynamic[i].d_un.d_val;
+            gnu_hash = (uint32_t*)((char*)file_mapped + (val - load_bias));
+            ALOGI("Found DT_GNU_HASH: d_val=0x%lx, addr=%p", val, gnu_hash);
             if (gnu_hash) {
                 nbucket = gnu_hash[0];
                 bucket = &gnu_hash[4 + (gnu_hash[2] / sizeof(void*))];
@@ -107,8 +136,9 @@ void ElfImg::parseDynamic() {
                 ALOGI("GNU_HASH: nbucket=%d", nbucket);
             }
         } else if (dynamic[i].d_tag == DT_HASH) {
-            uint32_t* h = (uint32_t*)(dynamic[i].d_un.d_val + bias);
-            ALOGI("Found DT_HASH: %p", h);
+            uint64_t val = dynamic[i].d_un.d_val;
+            uint32_t* h = (uint32_t*)((char*)file_mapped + (val - load_bias));
+            ALOGI("Found DT_HASH: d_val=0x%lx, addr=%p", val, h);
             nbucket = h[0];
             symtab_count = h[1];
             bucket = &h[2];
@@ -116,6 +146,8 @@ void ElfImg::parseDynamic() {
             ALOGI("ELF_HASH: nbucket=%d, symtab_count=%zu", nbucket, symtab_count);
         }
     }
+    
+    ALOGI("Scanned %d dynamic entries", dyn_count);
     
     if (!dynsym || !strtab) {
         ALOGE("Missing dynsym or strtab! dynsym=%p strtab=%p", dynsym, strtab);
@@ -142,8 +174,8 @@ uint32_t ElfImg::gnuHash(const char* name) const {
 }
 
 void* ElfImg::findSymbol(const char* name) {
-    if (!dynsym || !strtab) {
-        ALOGE("findSymbol: dynsym or strtab null");
+    if (!dynsym || !strtab || !base) {
+        ALOGE("findSymbol: dynsym=%p strtab=%p base=%p", dynsym, strtab, base);
         return nullptr;
     }
     
@@ -155,10 +187,12 @@ void* ElfImg::findSymbol(const char* name) {
         
         int attempts = 0;
         while (idx != 0 && attempts < 100) {
-            char* sym_name = (char*)strtab + ((Elf64_Sym*)dynsym)[idx].st_name;
+            Elf64_Sym* sym = ((Elf64_Sym*)dynsym) + idx;
+            char* sym_name = (char*)strtab + sym->st_name;
             if (strcmp(sym_name, name) == 0) {
-                void* addr = (void*)(((Elf64_Sym*)dynsym)[idx].st_value + bias);
-                ALOGI("Found %s at %p", name, addr);
+                // Bug 2 fix: Just use base + st_value (no bias)
+                void* addr = (void*)((char*)base + sym->st_value);
+                ALOGI("Found %s at %p (st_value=0x%lx)", name, addr, sym->st_value);
                 return addr;
             }
             idx = chain[idx];
@@ -174,8 +208,9 @@ void* ElfImg::getSymbolAddress(const char* name) {
 }
 
 void* ElfImg::getSymbolAddressByPrefix(const char* prefix) {
-    if (!dynsym || !strtab) {
-        ALOGE("getSymbolAddressByPrefix: dynsym or strtab null");
+    if (!dynsym || !strtab || !base) {
+        ALOGE("getSymbolAddressByPrefix: dynsym=%p strtab=%p base=%p", 
+              dynsym, strtab, base);
         return nullptr;
     }
     
@@ -183,20 +218,23 @@ void* ElfImg::getSymbolAddressByPrefix(const char* prefix) {
     
     ALOGI("Prefix searching for: %s", prefix);
     
-    // Iterate through symbol table
+    // Iterate through symbol table - note: dynsym points to file memory
     for (uint32_t i = 1; i < 10000; i++) {
         Elf64_Sym* sym = ((Elf64_Sym*)dynsym) + i;
         if (sym->st_name == 0) continue;
+        if (sym->st_value == 0) continue;
         
         char* sym_name = (char*)strtab + sym->st_name;
         if (sym_name && strncmp(sym_name, prefix, prefix_len) == 0) {
-            void* addr = (void*)(sym->st_value + bias);
+            // Bug 2 fix: Just use base + st_value (no bias)
+            void* addr = (void*)((char*)base + sym->st_value);
             uintptr_t addr_val = (uintptr_t)addr;
             uintptr_t base_val = (uintptr_t)base;
             
+            ALOGI("Found prefix match: %s at %p (st_value=0x%lx, base=%p)", 
+                  sym_name, addr, sym->st_value, base);
+            
             if (addr_val >= base_val && addr_val <= base_val + 0x200000) {
-                ALOGI("Found prefix match: %s at %p (st_value=0x%lx)", 
-                      sym_name, addr, sym->st_value);
                 return addr;
             }
         }
