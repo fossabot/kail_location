@@ -126,10 +126,7 @@ class LocationSimulationViewModel(application: Application) : AndroidViewModel(a
             intent.putExtra(ServiceGo.EXTRA_JOYSTICK_ENABLED, isJoystickEnabled.value)
             intent.putExtra(ServiceGo.EXTRA_COORD_TYPE, ServiceGo.COORD_BD09)
             intent.putExtra(ServiceGo.EXTRA_RUN_MODE, currentRunMode)
-            
-            // 传入 Native Hook 状态
-            val nativeHookEnabled = sharedPreferences.getBoolean(SettingsViewModel.KEY_NATIVE_HOOK_ENABLED, false)
-            intent.putExtra(ServiceGo.EXTRA_NATIVE_SENSOR_HOOK, nativeHookEnabled)
+            intent.putExtra("EXTRA_IS_ROUTE_SIMULATION", false)
             
             ContextCompat.startForegroundService(app, intent)
             _isSimulating.value = true

@@ -143,6 +143,20 @@ internal object KailCommandHandler {
                 }
                 return true
             }
+            "set_route_simulation" -> {
+                val active = out.getBoolean("active", false)
+                val spm = out.getFloat("spm", 120f)
+                val mode = out.getInt("mode", 0)
+                try {
+                    FakeLocState.setRouteSimulation(active, spm, mode)
+                    out.putBoolean("ok", true)
+                    KailLog.d(null, "XPOSED", "PORTAL接收：路线模拟 active=$active spm=$spm mode=$mode")
+                } catch (e: Throwable) {
+                    out.putBoolean("ok", false)
+                    KailLog.e(null, "XPOSED", "PORTAL接收：设置路线模拟失败 error=${e.message}")
+                }
+                return true
+            }
             else -> return false
         }
     }

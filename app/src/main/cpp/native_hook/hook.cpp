@@ -9,13 +9,13 @@
 #include <sys/types.h>
 
 #include "sensor_simulator.h"
-// #include "elf_util.h" // unused - using hardcoded offset
 
 #define LOG_TAG "NativeHook"
 #define ALOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define ALOGD(...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
 #define ALOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
+#define SENSOR_TYPE_ACCELEROMETER 1
 #define SENSOR_TYPE_STEP_COUNTER 19
 #define SENSOR_TYPE_STEP_DETECTOR 18
 
@@ -23,42 +23,36 @@ typedef int (*PollFunc)(void*, void*, int);
 
 static PollFunc original_poll = nullptr;
 static bool hook_installed = false;
+static bool route_simulation_active = false;
+
+void setRouteSimulationActive(bool active) {
+    route_simulation_active = active;
+    ALOGI("Route simulation: %s", active ? "ACTIVE" : "INACTIVE");
+    if (!active) {
+        gait::SensorSimulator::Get().UpdateParams(120.0f, 0, false);
+    }
+}
 
 static void process_sensor_events(void* buffer, int count) {
     if (!buffer || count <= 0 || count > 64) return;
 
-    char* base = reinterpret_cast<char*>(buffer);
+    if (!route_simulation_active) return;
 
-    ALOGI("event count = %d", count);
+    sensors_event_t* events = static_cast<sensors_event_t*>(buffer);
+
+    ALOGD("Processing %d sensor events", count);
+
+    gait::SensorSimulator::Get().ProcessSensorEvents(events, count);
 
     for (int i = 0; i < count; i++) {
-        char* evt = base + i * 0x60;
+        sensors_event_t& e = events[i];
 
-        int version = *(int*)(evt + 0x00);
-        int sensor  = *(int*)(evt + 0x04);
-        int type    = *(int*)(evt + 0x08);
-        int64_t ts  = *(int64_t*)(evt + 0x10);
-
-        float* data = (float*)(evt + 0x18);
-
-        if (type <= 0 || type > 50) continue;
-
-        ALOGI("[#%d] type=%d sensor=%d ver=%d ts=%lld",
-              i, type, sensor, version, (long long)ts);
-
-        ALOGI("     data = %.6f %.6f %.6f",
-              data[0], data[1], data[2]);
-
-        if (type == 1) {
-            ALOGI("     ==> ACCELEROMETER");
-        }
-
-        if (type == SENSOR_TYPE_STEP_COUNTER) {
-            ALOGI("     ==> STEP_COUNTER = %.0f", data[0]);
-        }
-
-        if (type == SENSOR_TYPE_STEP_DETECTOR) {
-            ALOGI("     ==> STEP_DETECTOR");
+        if (e.type == SENSOR_TYPE_STEP_COUNTER) {
+            ALOGI("     STEP_COUNTER modified: %.0f", e.data[0]);
+        } else if (e.type == SENSOR_TYPE_STEP_DETECTOR) {
+            ALOGI("     STEP_DETECTOR modified: %.0f", e.data[0]);
+        } else if (e.type == SENSOR_TYPE_ACCELEROMETER) {
+            ALOGD("     ACCEL: %.2f %.2f %.2f", e.data[0], e.data[1], e.data[2]);
         }
     }
 }
@@ -132,6 +126,26 @@ static void install_poll_hook() {
 }
 
 extern "C" {
+
+JNIEXPORT void JNICALL 
+Java_com_kail_location_xposed_FakeLocState_nativeSetRouteSimulation(
+    JNIEnv* env, 
+    jclass clazz, 
+    jboolean active,
+    jfloat spm,
+    jint mode
+) {
+    bool isActive = (active != JNI_FALSE);
+    ALOGI("JNI: Set route simulation: active=%d, spm=%.2f, mode=%d", 
+          isActive ? 1 : 0, spm, mode);
+    
+    if (isActive) {
+        setRouteSimulationActive(true);
+        gait::SensorSimulator::Get().UpdateParams(spm, mode, true);
+    } else {
+        setRouteSimulationActive(false);
+    }
+}
 
 JNIEXPORT void JNICALL 
 Java_com_kail_location_xposed_FakeLocState_nativeSetGaitParams(

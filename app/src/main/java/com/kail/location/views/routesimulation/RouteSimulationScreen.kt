@@ -239,7 +239,6 @@ fun RouteSimulationScreen(
                 if (settings.speedFluctuation != it.speedFluctuation) viewModel.updateSpeedFluctuation(it.speedFluctuation)
                 if (settings.stepFreqSimulation != it.stepFreqSimulation) viewModel.updateStepFreqSimulation(it.stepFreqSimulation)
                 if (settings.stepCadenceSpm != it.stepCadenceSpm) viewModel.updateStepCadenceSpm(it.stepCadenceSpm)
-                if (settings.nativeSensorHook != it.nativeSensorHook) viewModel.updateNativeSensorHook(it.nativeSensorHook)
                 if (settings.mode != it.mode) viewModel.updateMode(it.mode)
             }
         )
@@ -567,24 +566,6 @@ fun SettingsDialog(
                             thumbColor = MaterialTheme.colorScheme.primary,
                             activeTrackColor = MaterialTheme.colorScheme.primary
                         )
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("Native 传感器 Hook", fontSize = 14.sp, color = Color.Black)
-                    Switch(
-                        checked = settings.nativeSensorHook,
-                        onCheckedChange = { onSettingsChange(settings.copy(nativeSensorHook = it)) },
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = Color.White,
-                            checkedTrackColor = MaterialTheme.colorScheme.primary
-                        ),
-                        modifier = Modifier.scale(0.8f)
                     )
                 }
             }

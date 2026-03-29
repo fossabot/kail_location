@@ -73,6 +73,7 @@ class ServiceGo : Service() {
     private var locationLoopStarted: Boolean = false
     private var stepEnabledCache: Boolean = false
     private var stepFreqCache: Double = 0.0
+    private var isRouteSimulationCache: Boolean = false
     private var speedFluctuation: Boolean = false
 
     companion object {
@@ -101,7 +102,6 @@ class ServiceGo : Service() {
         const val EXTRA_SEEK_RATIO = "EXTRA_SEEK_RATIO"
         const val EXTRA_STEP_ENABLED = "EXTRA_STEP_ENABLED"
         const val EXTRA_STEP_FREQ = "EXTRA_STEP_FREQ"
-        const val EXTRA_NATIVE_SENSOR_HOOK = "EXTRA_NATIVE_SENSOR_HOOK"
         const val CONTROL_PAUSE = "pause"
         const val CONTROL_RESUME = "resume"
         const val CONTROL_STOP = "stop"
@@ -109,7 +109,6 @@ class ServiceGo : Service() {
         const val CONTROL_SET_SPEED = "set_speed"
         const val CONTROL_SET_SPEED_FLUCTUATION = "set_speed_fluctuation"
         const val CONTROL_SET_STEP = "set_step"
-        const val CONTROL_SET_NATIVE_HOOK = "set_native_hook"
         const val COORD_WGS84 = "WGS84"
         const val COORD_BD09 = "BD09"
         const val COORD_GCJ02 = "GCJ02"
@@ -334,21 +333,12 @@ class ServiceGo : Service() {
                         }
                         return super.onStartCommand(intent, flags, startId)
                     }
-                    CONTROL_SET_NATIVE_HOOK -> {
-                        try {
-                            val enabled = intent.getBooleanExtra(EXTRA_NATIVE_SENSOR_HOOK, false)
-                            KailLog.i(this, "ServiceGo", "native hook status updated to $enabled")
-                        } catch (e: Exception) {
-                            KailLog.e(this, "ServiceGo", "set_native_hook error: ${e.message}")
-                        }
-                        return super.onStartCommand(intent, flags, startId)
-                    }
                 }
             }
             stepEnabledCache = intent.getBooleanExtra(EXTRA_STEP_ENABLED, false)
             stepFreqCache = intent.getFloatExtra(EXTRA_STEP_FREQ, 0f).toDouble()
+            isRouteSimulationCache = intent.getBooleanExtra("EXTRA_IS_ROUTE_SIMULATION", false)
             speedFluctuation = intent.getBooleanExtra(EXTRA_SPEED_FLUCTUATION, false)
-            val nativeHookEnabled = intent.getBooleanExtra(EXTRA_NATIVE_SENSOR_HOOK, false)
         }
         // Ensure startForeground is called to prevent crash (ForegroundServiceDidNotStartInTimeException)
         // even if onCreate was skipped (service already running)
@@ -467,6 +457,16 @@ class ServiceGo : Service() {
     override fun onDestroy() {
         KailLog.i(this, "ServiceGo", "onDestroy started")
         try {
+            // Stop route simulation native hook
+            if (portalStarted) {
+                portalSend("set_route_simulation") {
+                    putBoolean("active", false)
+                    putFloat("spm", 120f)
+                    putInt("mode", 0)
+                }
+                KailLog.i(this, "ServiceGo", ">>> Sent route simulation stop")
+            }
+            
             val intent = Intent(ACTION_STATUS_CHANGED)
             intent.putExtra(EXTRA_IS_SIMULATING, false)
             intent.putExtra(EXTRA_IS_PAUSED, false)
@@ -790,14 +790,24 @@ class ServiceGo : Service() {
         
         KailLog.i(this, "ServiceGo", ">>> loadResult: $loadResult")
         
-        // Send gait params after library loaded
+        // Send route simulation params after library loaded
+        // This activates the sensor hook only for route simulation
         if (loadResult) {
-            portalSend("set_gait_params") {
-                putFloat("spm", stepFreqCache.toFloat())
-                putInt("mode", 0)
-                putBoolean("enable", stepEnabledCache)
+            if (isRouteSimulationCache) {
+                portalSend("set_route_simulation") {
+                    putBoolean("active", true)
+                    putFloat("spm", stepFreqCache.toFloat())
+                    putInt("mode", 0)
+                }
+                KailLog.i(this, "ServiceGo", ">>> Native hook loaded for route simulation")
+            } else {
+                portalSend("set_route_simulation") {
+                    putBoolean("active", false)
+                    putFloat("spm", stepFreqCache.toFloat())
+                    putInt("mode", 0)
+                }
+                KailLog.i(this, "ServiceGo", ">>> Native hook loaded but not route simulation")
             }
-            KailLog.i(this, "ServiceGo", ">>> Native hook loaded and gait params sent")
         } else {
             KailLog.e(this, "ServiceGo", ">>> Load failed!")
         }

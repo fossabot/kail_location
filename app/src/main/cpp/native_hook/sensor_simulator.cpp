@@ -120,18 +120,18 @@ void SensorSimulator::ApplyAccelerometer(sensors_event_t& e, double dt) {
             a = 1.0; b = 1.0; c = 1.0;
             break;
         case GaitMode::Run:
-            a = 1.15; b = 1.10; c = 1.10;
+            a = 1.5; b = 1.3; c = 1.3;
             break;
         case GaitMode::FastRun:
-            a = 1.30; b = 1.20; c = 1.20;
+            a = 2.0; b = 1.6; c = 1.6;
             break;
     }
     
     double t = static_cast<double>(e.timestamp) * kNsToSec;
     
-    double base_x = std::sin(omega * t) * 0.6 * a;
-    double base_y = std::cos(omega * t) * 0.4 * b;
-    double base_z = 9.8 + std::sin(2.0 * omega * t) * 0.2 * c;
+    double base_x = std::sin(omega * t) * 3.0 * a;
+    double base_y = std::cos(omega * t) * 2.0 * b;
+    double base_z = 9.8 + std::sin(2.0 * omega * t) * 1.5 * c;
     
     double noise_scale = 0.05;
     double x = base_x * (1.0 + NextSignedNoise(noise_scale));

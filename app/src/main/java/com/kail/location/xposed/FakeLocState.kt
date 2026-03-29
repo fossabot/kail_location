@@ -206,7 +206,23 @@ internal object FakeLocState {
         return out
     }
 
+    fun setRouteSimulation(active: Boolean, spm: Float = 120f, mode: Int = 0) {
+        android.util.Log.i("NativeHook", "setRouteSimulation called: active=$active, spm=$spm, mode=$mode")
+        
+        if (nativeLibraryLoaded) {
+            try {
+                nativeSetRouteSimulation(active, spm, mode)
+                android.util.Log.i("NativeHook", "nativeSetRouteSimulation succeeded: active=$active")
+            } catch (e: Exception) {
+                android.util.Log.e("NativeHook", "nativeSetRouteSimulation failed: ${e.message}")
+            }
+        } else {
+            android.util.Log.w("NativeHook", "nativeLibraryLoaded is false")
+        }
+    }
+
     // Native methods (implemented in C++)
+    private external fun nativeSetRouteSimulation(active: Boolean, spm: Float, mode: Int)
     private external fun nativeSetGaitParams(spm: Float, mode: Int, enable: Boolean)
     private external fun nativeReloadConfig(): Boolean
     private external fun nativeInitHook()
