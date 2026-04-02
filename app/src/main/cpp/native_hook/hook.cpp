@@ -76,19 +76,54 @@ static void process_sensor_event(void* event) {
 }
 
 extern "C" long hooked_write(void* events, long count) {
-    if (events && count > 0) {
-        char* ptr = (char*)events;
-        for (long i = 0; i < count; i++) {
-            void* event = ptr + i * EVENT_SIZE;
-            process_sensor_event(event);
+
+    // ✅ 基础参数校验
+    if (!events) {
+        ALOGE("events is null!");
+        if (original_write) {
+            return original_write(events, count);
         }
+        return -1;
     }
 
-    if (original_write) {
-        return original_write(events, count);
+    if (count <= 0 || count > 1000) {
+        ALOGE("invalid count: %ld", count);
+        if (original_write) {
+            return original_write(events, count);
+        }
+        return -1;
     }
-    return 0;
+
+    // ✅ 遍历 events（带基础防御）
+    char* ptr = (char*)events;
+
+    for (long i = 0; i < count; i++) {
+
+        void* event = ptr + i * EVENT_SIZE;
+
+        // 👉 简单地址合法性判断（防野指针）
+        uintptr_t addr = (uintptr_t)event;
+        if (addr < 0x10000) {
+            ALOGE("invalid event ptr: %p", event);
+            continue;
+        }
+
+        process_sensor_event(event);
+    }
+
+    // ✅ 关键：检查 original_write
+    if (!original_write) {
+        ALOGE("❌ original_write is null! Hook may have failed.");
+
+        // ⚠️ 这里不要 return 0（会吞数据）
+        // 👉 推荐返回 count（假装写成功，避免系统异常）
+        return count;
+    }
+
+    // ✅ 正常走原函数
+    return original_write(events, count);
 }
+
 
 extern "C" void hooked_convert(void* inEvent, void* outEvent) {
     if (original_convert) {
